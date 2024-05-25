@@ -35,6 +35,7 @@ typedef struct {
   bool is_inline;
   bool is_tls;
   bool is_constexpr;
+  bool is_stackless;
   int align;
 } VarAttr;
 
@@ -489,6 +490,12 @@ static Type *declspec(Token **rest, Token *tok, VarAttr *attr) {
     if (attr)
       attr_aligned(tok, &attr->align);
 
+    if (equal(tok, "goto")) {
+        attr->is_stackless = true;
+        tok = tok->next;
+        continue;
+    }
+
     if (!is_typename(tok))
       break;
 
@@ -513,9 +520,9 @@ static Type *declspec(Token **rest, Token *tok, VarAttr *attr) {
         attr->is_tls = true;
 
       if (attr->is_typedef &&
-          attr->is_static + attr->is_extern + attr->is_inline + attr->is_tls > 1)
+          attr->is_static + attr->is_extern + attr->is_inline + attr->is_tls + attr->is_stackless > 1)
         error_tok(tok, "typedef may not be used together with static,"
-                  " extern, inline, __thread or _Thread_local");
+                  " extern, inline, goto, __thread or _Thread_local");
       tok = tok->next;
       continue;
     }
@@ -3413,6 +3420,9 @@ static Node *funcall(Token **rest, Token *tok, Node *fn) {
   Node *node = new_unary(ND_FUNCALL, fn, tok);
   node->ty = ty->return_ty;
   node->args = head.param_next;
+  if (current_fn && fn->kind == ND_VAR) {
+    strarray_push(&current_fn->funcalls, fn->var->name);
+  }
 
   // If a function returns a struct, it is caller's responsibility
   // to allocate a space for the return value.
@@ -3860,6 +3870,28 @@ static void mark_live(Obj *var) {
   }
 }
 
+// Detect forbidden stackless functions
+static void scan_stackless_funcs(Obj *var) {
+  if (!var->is_function || var->dfs_color == DFS_BLACK)
+    return;
+  if (var->dfs_color == DFS_GRAY && var->is_stackless) {
+    eval_recover = NULL;
+    eval_error(var->prototype, "recursive stackless function");
+  }
+  if (var->dfs_color == DFS_WHITE) {
+    var->dfs_color = DFS_GRAY;
+  } else {
+    var->dfs_color = DFS_BLACK;
+    return;
+  }
+  for (int i = 0; i < var->funcalls.len; i++) {
+    Obj *fn = find_func(var->funcalls.data[i]);
+    if (fn)
+      scan_stackless_funcs(fn);
+  }
+  var->dfs_color = DFS_BLACK;
+}
+
 static Obj *func_prototype(Type *ty, VarAttr *attr, Token *name) {
   char *name_str = get_ident(name);
 
@@ -3869,8 +3901,12 @@ static Obj *func_prototype(Type *ty, VarAttr *attr, Token *name) {
     fn->is_function = true;
     fn->is_static = attr->is_static || (attr->is_inline && !attr->is_extern);
     fn->is_inline = attr->is_inline;
+    fn->is_stackless = attr->is_stackless;
+    fn->prototype = name;
   } else if (!fn->is_static && attr->is_static) {
     error_tok(name, "static declaration follows a non-static declaration");
+  } else if (!fn->is_stackless && attr->is_stackless) {
+    error_tok(name, "stackless declaration follows a non-stackless declaration");
   }
   fn->is_root = !(fn->is_static && fn->is_inline);
   return fn;
@@ -4007,9 +4043,11 @@ Obj *parse(Token *tok) {
     tok = global_declaration(tok, basety, &attr);
   }
 
-  for (Obj *var = globals; var; var = var->next)
+  for (Obj *var = globals; var; var = var->next) {
+    scan_stackless_funcs(var);
     if (var->is_root)
       mark_live(var);
+  }
 
   // Remove redundant tentative definitions.
   scan_globals();

@@ -166,6 +166,12 @@ Token *preprocess(Token *tok);
 // parse.c
 //
 
+typedef enum {
+  DFS_WHITE,    // unvisited
+  DFS_GRAY,     // visiting
+  DFS_BLACK,    // visited
+} DfsColor;
+
 // Variable or function
 typedef struct Obj Obj;
 struct Obj {
@@ -202,11 +208,17 @@ struct Obj {
   bool is_inline;
   bool dealloc_vla;
   Node *body;
+  bool is_stackless;
+  Token *prototype;
 
   // Static inline function
   bool is_live;
   bool is_root;
   StringArray refs;
+
+  // Stackless functions
+  StringArray funcalls;
+  DfsColor dfs_color;
 };
 
 // Global variable can be initialized either by a constant expression

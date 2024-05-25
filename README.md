@@ -3,6 +3,15 @@
 This is a fork of [Hsiang-Ying Fu's slimcc](https://github.com/fuhsnn/slimcc). Many thanks
 to slimcc and its ancestors ([chibicc](https://github.com/rui314/chibicc) and [8cc](https://github.com/rui314/8cc)).
 
+The keyword 'goto' is available as a function specifier to declare stackless functions.
+Stackless functions do not allocate any memory (on the stack or heap) when they are
+invoked.
+
+Restrictions on stackless functions:
+* the function 'main' cannot be a stackless function
+* stackless functions cannot be recursive or mutually recursive
+* stackless functions cannot be variadic
+
 ## Motivation
 
 * [Coroutines and effects](https://without.boats/blog/coroutines-and-effects/) by without boats: _"The program stack is such a universal model of program execution today that we treat it as inevitable, but like everything else it had to be invented."_
