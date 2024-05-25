@@ -3870,26 +3870,59 @@ static void mark_live(Obj *var) {
   }
 }
 
-// Detect forbidden stackless functions
-static void scan_stackless_funcs(Obj *var) {
-  if (!var->is_function || var->dfs_color == DFS_BLACK)
-    return;
-  if (var->dfs_color == DFS_GRAY && var->is_stackless) {
-    eval_recover = NULL;
-    eval_error(var->prototype, "recursive stackless function");
-  }
-  if (var->dfs_color == DFS_WHITE) {
-    var->dfs_color = DFS_GRAY;
-  } else {
-    var->dfs_color = DFS_BLACK;
-    return;
-  }
+static inline int min(int a, int b) {
+  return (a < b) ? a : b;
+}
+
+// Stackless functions cannot be recursive.
+// Stackless functions cannot be mutually-recursive.
+// Stackful functions can be recursive.
+// Stackful functions can be mutually-recursive.
+// Stackless and stackful functions cannot be mutually-recursive.
+
+// Apply Tarjan's strongly connected components algorithm.
+// Each stackless function must be in its own strongly-connected component.
+static int find_strongly_connected_components(Obj *var) {
+  static int index = 1;
+
+  if (!var->is_function)
+    return index;
+
+  var->scc_index = index;
+  var->scc_lowlink = index;
+  var->scc_on_stack = true;
+  index = index + 1;
+
   for (int i = 0; i < var->funcalls.len; i++) {
     Obj *fn = find_func(var->funcalls.data[i]);
-    if (fn)
-      scan_stackless_funcs(fn);
+    if (!fn) continue;
+    if (fn == var && fn->is_stackless) {
+      eval_recover = NULL;
+      eval_error(var->prototype, "recursive stackless function");
+    }
+    if (!fn->scc_index) {
+      find_strongly_connected_components(fn);
+      var->scc_lowlink = min(var->scc_lowlink, fn->scc_lowlink);
+    } else if (fn->scc_on_stack) {
+      var->scc_lowlink = min(var->scc_lowlink, fn->scc_index);
+    }
   }
-  var->dfs_color = DFS_BLACK;
+  return index;
+}
+
+static void count_strongly_connected_components(Obj *var, int *scc_counts) {
+  if (!var->is_function)
+    return;
+  scc_counts[var->scc_lowlink]++;
+}
+
+static void check_strongly_connected_components(Obj *var, int *scc_counts) {
+  if (!var->is_function)
+    return;
+  if (var->is_stackless && scc_counts[var->scc_lowlink] > 1) {
+      eval_recover = NULL;
+      eval_error(var->prototype, "mutually-recursive stackless function");
+  }
 }
 
 static Obj *func_prototype(Type *ty, VarAttr *attr, Token *name) {
@@ -4043,10 +4076,20 @@ Obj *parse(Token *tok) {
     tok = global_declaration(tok, basety, &attr);
   }
 
+  int scc_count = 0;
   for (Obj *var = globals; var; var = var->next) {
-    scan_stackless_funcs(var);
+    if (!var->scc_index)
+      scc_count = find_strongly_connected_components(var);
     if (var->is_root)
       mark_live(var);
+  }
+
+  int *scc_counts = calloc(scc_count, sizeof(int));
+  for (Obj *var = globals; var; var = var->next) {
+    count_strongly_connected_components(var, scc_counts);
+  }
+  for (Obj *var = globals; var; var = var->next) {
+    check_strongly_connected_components(var, scc_counts);
   }
 
   // Remove redundant tentative definitions.
