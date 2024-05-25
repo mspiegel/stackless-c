@@ -1,0 +1,2 @@
+goto void main(void) {
+}

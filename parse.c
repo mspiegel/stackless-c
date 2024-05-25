@@ -3936,6 +3936,9 @@ static Obj *func_prototype(Type *ty, VarAttr *attr, Token *name) {
     fn->is_inline = attr->is_inline;
     fn->is_stackless = attr->is_stackless;
     fn->prototype = name;
+    if (fn->is_stackless && equal(name, "main")) {
+      error_tok(name, "main cannot be a stackless function");
+    }
   } else if (!fn->is_static && attr->is_static) {
     error_tok(name, "static declaration follows a non-static declaration");
   } else if (!fn->is_stackless && attr->is_stackless) {
